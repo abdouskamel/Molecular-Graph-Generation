@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import dgl
 
+import torch.nn as nn
+
 from rdkit import Chem
 from rdkit.Chem import rdmolops
 
@@ -84,8 +86,10 @@ def to_dgl_graph(graph):
         edges_types.append(edge[1])
 
     dgl_graph = dgl.graph((edges_src_nodes, edges_dst_nodes), num_nodes=nb_nodes)
+
     dgl_graph.ndata["feats"] = torch.tensor(graph["nodes"]).float()
-    dgl_graph.edata["type"] = torch.tensor(edges_types).reshape(-1, 1).float()
+    dgl_graph.ndata["feats_categorical"] = torch.argmax(dgl_graph.ndata["feats"], dim=1)
+    dgl_graph.edata["type"] = torch.tensor(edges_types)
 
     return dgl_graph
 
@@ -93,31 +97,59 @@ def to_dgl_graph(graph):
 def kl_loss(mu, logstd):
     return -0.5 * torch.mean(torch.sum(1 + 2 * logstd - mu**2 - logstd.exp()**2, dim=1))
 
-# Compute the reconstruction loss using positive edges and sampled negative edges.
-def recon_loss(z, bg):
-    pos_edges_src, pos_edges_dst = bg.edges()
-    neg_edges_src, neg_edges_dst = sample_negative_edges(bg)
+# Compute the reconstruction loss between the predicted graphs and the true graphs.
+def recon_loss(pred_graphs, true_graphs, device):
+    total_loss = 0
+    ce_loss = nn.CrossEntropyLoss()
+    bce_loss = nn.BCELoss()
 
-    pos_edges_probas = torch.sigmoid((z[pos_edges_src] * z[pos_edges_dst]).sum(dim=1))
-    neg_edges_probas = torch.sigmoid((z[neg_edges_src] * z[neg_edges_dst]).sum(dim=1))
+    for pred_g, true_g in zip(pred_graphs, true_graphs):
+        pred_node_types, pred_pos_edges, pred_neg_edges = pred_g
+        true_node_types = true_g.ndata["feats_categorical"]
 
-    return -torch.log(pos_edges_probas + 1e-15).mean() - torch.log(1 - neg_edges_probas + 1e-15).mean()
+        # Cross-entropy loss for node types
+        total_loss += ce_loss(pred_node_types, true_node_types)
 
-# Given a batch of graphs, sample a negative edge for every positive edge in each graph
-def sample_negative_edges(bg):
-    neg_edges_src, neg_edges_dst = [], []
-    total_nb_nodes = 0
+        # Compute the loss for edge existence
+        pred_edge_existence = []
+        true_edge_existence = []
 
-    for graph in dgl.unbatch(bg):
-        nb_nodes = graph.number_of_nodes()
-        pos_edges_src, pos_edges_dst = graph.edges()
+        for u, v, probability, _ in pred_pos_edges:
+            pred_edge_existence.append(probability)
+            if true_g.has_edges_between(u, v):
+                true_edge_existence.append(1.0)
+            else:
+                true_edge_existence.append(0.0)
 
-        new_neg_edges_src = torch.randint(nb_nodes, (nb_nodes,)) + total_nb_nodes
-        new_neg_edges_dst = torch.randint(nb_nodes, (nb_nodes,)) + total_nb_nodes
+        for u, v, probability in pred_neg_edges:
+            pred_edge_existence.append(probability)
+            if true_g.has_edges_between(u, v):
+                true_edge_existence.append(1.0)
+            else:
+                true_edge_existence.append(0.0)
 
-        neg_edges_src.extend(new_neg_edges_src.tolist())
-        neg_edges_dst.extend(new_neg_edges_dst.tolist())
+        if len(pred_edge_existence) > 0:
+            true_edge_existence = torch.tensor(true_edge_existence).to(device)
+            pred_edge_existence = torch.cat(pred_edge_existence)
 
-        total_nb_nodes += nb_nodes
+            total_loss += bce_loss(pred_edge_existence, true_edge_existence)
 
-    return neg_edges_src, neg_edges_dst
+        # Compute the loss for edge types
+        pred_edge_types = []
+        true_edge_types = []
+
+        for u, v, _, pred_type in pred_pos_edges:
+            if true_g.has_edges_between(u, v):
+                pred_edge_types.append(pred_type.reshape(1, -1))
+
+                e_id = true_g.edge_ids(u, v)
+                true_edge_types.append(true_g.edata["type"][e_id])
+
+        if len(pred_edge_types) > 0:
+            true_edge_types = torch.tensor(true_edge_types).to(device)
+            pred_edge_types = torch.cat(pred_edge_types, dim=0)
+
+            total_loss += ce_loss(pred_edge_types, true_edge_types)
+
+    return total_loss / len(pred_graphs)
+
