@@ -8,19 +8,25 @@ import torch.nn.functional as F
 from dgl.nn import RelGraphConv
 from utils import zinc_atoms_info
 
+n_hidden_1 = 128
+n_hidden_2 = 128
+n_hidden_z = 128
+
 class VGAE(nn.Module):
     def __init__(self, nb_node_types, nb_edge_types):
         super(VGAE, self).__init__()
 
         # For the encoder
-        self.conv1 = RelGraphConv(nb_node_types, 32, nb_edge_types)
-        self.conv_mu = RelGraphConv(32, 32, nb_edge_types)
-        self.conv_logstd = RelGraphConv(32, 32, nb_edge_types)
+        self.conv1 = RelGraphConv(nb_node_types, n_hidden_1, nb_edge_types)
+        self.conv2 = RelGraphConv(n_hidden_1, n_hidden_2, nb_edge_types)
+        
+        self.conv_mu = RelGraphConv(n_hidden_2, n_hidden_z, nb_edge_types)
+        self.conv_logstd = RelGraphConv(n_hidden_2, n_hidden_z, nb_edge_types)
 
         # For the decoder
-        self.node_types_fc = nn.Linear(32, nb_node_types)
-        self.edge_existence_fc = nn.Linear(2 * (32 + nb_node_types) + 32, 1)
-        self.edge_types_fc = nn.Linear(2 * (32 + nb_node_types) + 32, nb_edge_types)
+        self.node_types_fc = nn.Linear(n_hidden_z, nb_node_types)
+        self.edge_existence_fc = nn.Linear(3 * n_hidden_z + 2 * nb_node_types, 1)
+        self.edge_types_fc = nn.Linear(3 * n_hidden_z + 2 * nb_node_types, nb_edge_types)
 
     def forward(self, g, n_feats, e_types=None):
         z, gz, mu, logstd = self.encode(g, n_feats, e_types)
@@ -32,6 +38,8 @@ class VGAE(nn.Module):
     def encode(self, g, n_feats, e_types=None):
         # Run R-GCN to get mu and logstd for each node.
         h = F.relu(self.conv1(g, n_feats, e_types))
+        h = F.relu(self.conv2(g, h, e_types))
+
         mu = self.conv_mu(g, h, e_types)
         logstd = self.conv_logstd(g, h, e_types)
 

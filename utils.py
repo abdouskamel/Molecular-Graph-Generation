@@ -98,55 +98,68 @@ def kl_loss(mu, logstd):
     return -0.5 * torch.mean(torch.sum(1 + 2 * logstd - mu**2 - logstd.exp()**2, dim=1))
 
 # Compute the reconstruction loss between the predicted graphs and the true graphs.
-def recon_loss(pred_graphs, true_graphs, device):
+def recon_loss(pred_graphs, true_graphs):
     total_loss = 0
     ce_loss = nn.CrossEntropyLoss()
     bce_loss = nn.BCELoss()
 
     for pred_g, true_g in zip(pred_graphs, true_graphs):
+        # Compute the loss for node types.
         pred_node_types, pred_pos_edges, pred_neg_edges = pred_g
         true_node_types = true_g.ndata["feats_categorical"]
 
-        # Cross-entropy loss for node types
         total_loss += ce_loss(pred_node_types, true_node_types)
 
-        # Compute the loss for edge existence
+        # Compute the loss for edge existence and edge types.
         pred_edge_existence = []
         true_edge_existence = []
 
-        for u, v, probability, _ in pred_pos_edges:
-            pred_edge_existence.append(probability)
-            if true_g.has_edges_between(u, v):
-                true_edge_existence.append(1.0)
-            else:
-                true_edge_existence.append(0.0)
+        pred_edge_types = []
+        true_edge_types = []
 
-        for u, v, probability in pred_neg_edges:
-            pred_edge_existence.append(probability)
+        # We keep track of the number of positive and negative edges that we have,
+        # so as not to have too many negative edges.
+        nb_negatives = 0
+        nb_positives = 0
+
+        # Process the predicted positive edges.
+        for u, v, probability, pred_type in pred_pos_edges:
             if true_g.has_edges_between(u, v):
+                pred_edge_existence.append(probability)
                 true_edge_existence.append(1.0)
-            else:
+
+                # We have a positive edge, so get its type to compute the loss for edge types.
+                pred_edge_types.append(pred_type.reshape(1, -1))
+                e_id = true_g.edge_ids(u, v)
+                true_edge_types.append(true_g.edata["type"][e_id])
+
+                nb_positives += 1
+
+            elif nb_negatives < nb_positives:
+                pred_edge_existence.append(probability)
                 true_edge_existence.append(0.0)
+                nb_negatives += 1
+
+        # Process the predicted negative edges.
+        for u, v, probability in pred_neg_edges:
+            if true_g.has_edges_between(u, v):
+                pred_edge_existence.append(probability)
+                true_edge_existence.append(1.0)
+                nb_positives += 1
+
+            elif nb_negatives < nb_positives:
+                pred_edge_existence.append(probability)
+                true_edge_existence.append(0.0)
+                nb_negatives += 1
 
         if len(pred_edge_existence) > 0:
-            true_edge_existence = torch.tensor(true_edge_existence).to(device)
+            true_edge_existence = torch.tensor(true_edge_existence)
             pred_edge_existence = torch.cat(pred_edge_existence)
 
             total_loss += bce_loss(pred_edge_existence, true_edge_existence)
 
-        # Compute the loss for edge types
-        pred_edge_types = []
-        true_edge_types = []
-
-        for u, v, _, pred_type in pred_pos_edges:
-            if true_g.has_edges_between(u, v):
-                pred_edge_types.append(pred_type.reshape(1, -1))
-
-                e_id = true_g.edge_ids(u, v)
-                true_edge_types.append(true_g.edata["type"][e_id])
-
         if len(pred_edge_types) > 0:
-            true_edge_types = torch.tensor(true_edge_types).to(device)
+            true_edge_types = torch.tensor(true_edge_types)
             pred_edge_types = torch.cat(pred_edge_types, dim=0)
 
             total_loss += ce_loss(pred_edge_types, true_edge_types)
