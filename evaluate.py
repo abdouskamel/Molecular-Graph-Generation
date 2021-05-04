@@ -52,7 +52,7 @@ def compute_qed(mols_list):
 
 # Load the training molecules
 with open(train_smiles_path, "rb") as f:
-    train_smiles_list = pickle.load(f)[:100]
+    train_smiles_list = pickle.load(f)
     train_smiles_set = set(train_smiles_list)
 
     train_mols = []
@@ -61,7 +61,7 @@ with open(train_smiles_path, "rb") as f:
 
 # Load the generated molecules
 with open(generated_smiles_path, "rb") as f:
-    generated_smiles_list = pickle.load(f)[:100]
+    generated_smiles_list = pickle.load(f)
     generated_smiles_set = set(generated_smiles_list)
 
     generated_mols = []
