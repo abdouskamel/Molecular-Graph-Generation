@@ -71,10 +71,14 @@ def smiles_to_graph(smiles):
 
     return nodes, edges
 
+# Transform a molecule represented with a graph into a SMILES.
+def graph_to_smiles(node_types, edges_src_nodes, edges_dst_nodes, edges_types):
+    pass
+
 # Generate a DGLGraph from our dataset graphs.
 # We do this in order to train graph models with the Deep Graph Library (DGL).
 def to_dgl_graph(graph):
-    nb_nodes =  len(graph["nodes"])
+    nb_nodes = len(graph["nodes"])
 
     edges_src_nodes = []
     edges_dst_nodes = []
@@ -166,3 +170,58 @@ def recon_loss(pred_graphs, true_graphs):
 
     return total_loss / len(pred_graphs)
 
+# Postprocess the decoded graph by adding hydrogen atoms.
+def postprocess_decoded_graph(decoded_node_types, decoded_edges):
+    nb_nodes = len(decoded_node_types)
+    node_valences = [0] * nb_nodes
+
+    node_types = []
+    edges_src_nodes = []
+    edges_dst_nodes = []
+    edges_types = []
+
+    for type_distribution in decoded_node_types:
+        node_types.append(torch.argmax(type_distribution).item())
+
+    for src, dst, _, type_distribution in decoded_edges:
+        edges_src_nodes.append(src)
+        edges_dst_nodes.append(dst)
+
+        e_type = torch.argmax(type_distribution).item()
+        edges_types.append(e_type)
+
+        node_valences[src] += e_type + 1
+        node_valences[dst] += e_type + 1
+
+    # Remove atoms with a valence of 0.
+    to_remove = []
+
+    for u, valence in enumerate(node_valences):
+        if valence > 0:
+            continue
+
+        to_remove.append(u)
+        for i in range(len(edges_src_nodes)):
+            if edges_src_nodes[i] > u - len(to_remove):
+                edges_src_nodes[i] -= 1
+
+            if edges_dst_nodes[i] > u - len(to_remove):
+                edges_dst_nodes[i] -= 1
+
+    node_types = [x for i, x in enumerate(node_types) if i not in to_remove]
+    node_valences = [x for x in node_valences if x > 0]
+    nb_nodes = len(node_types)
+
+    # Link hydrogen atoms to atoms that did not reach their maximum valence.
+    for u, valence in enumerate(node_valences):
+        max_valence = zinc_atoms_info["maximum_valence"][node_types[u]]
+        for _ in range(0, max_valence - valence):
+            v = nb_nodes
+            nb_nodes += 1
+
+            node_types.append(4)
+            edges_src_nodes.append(u)
+            edges_dst_nodes.append(v)
+            edges_types.append(0)
+
+    return node_types, edges_src_nodes, edges_dst_nodes, edges_types
