@@ -10,6 +10,14 @@ from rdkit.Chem import rdmolops
 # A mapping between the bond types and the number of bonds.
 bond_dict = {"SINGLE": 0, "DOUBLE": 1, "TRIPLE": 2, "AROMATIC": 3}
 
+# A mapping between edge types and bond types.
+e_type_to_bond = {
+    0 : Chem.rdchem.BondType.SINGLE, 
+    1 : Chem.rdchem.BondType.DOUBLE, 
+    2 : Chem.rdchem.BondType.TRIPLE,
+    3 : Chem.rdchem.BondType.AROMATIC
+}
+
 # Information about atoms in the ZINC dataset
 # Taken from : https://github.com/microsoft/constrained-graph-variational-autoencoder/blob/master/utils.py#L37
 zinc_atoms_info = { 
@@ -73,7 +81,26 @@ def smiles_to_graph(smiles):
 
 # Transform a molecule represented with a graph into a SMILES.
 def graph_to_smiles(node_types, edges_src_nodes, edges_dst_nodes, edges_types):
-    pass
+    mol = Chem.MolFromSmiles("")
+    mol = Chem.rdchem.RWMol(mol)
+    
+    # Add atoms
+    for n_type in node_types:
+        atom = Chem.Atom(zinc_atoms_info["number_to_atom"][n_type])
+        charge_num = int(zinc_atoms_info["atom_types"][n_type].split("(")[1].strip(")"))
+        atom.SetFormalCharge(charge_num)
+        a = mol.AddAtom(atom)
+
+    # Add bonds
+    for i in range(len(edges_src_nodes)):
+        src = edges_src_nodes[i]
+        dst = edges_dst_nodes[i]
+        e_type = edges_types[i]
+
+        a = mol.AddBond(src, dst, e_type_to_bond[e_type])
+
+    smiles = Chem.MolToSmiles(mol)
+    return smiles
 
 # Generate a DGLGraph from our dataset graphs.
 # We do this in order to train graph models with the Deep Graph Library (DGL).

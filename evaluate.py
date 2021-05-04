@@ -8,7 +8,7 @@ from rdkit.Chem.Fingerprints import FingerprintMols
 from rdkit import DataStructs
 
 train_smiles_path = "data/zinc_250k_train_smiles.pkl"
-generated_smiles_path = "data/zinc_250k_train_smiles.pkl"
+generated_smiles_path = "data/zinc_250k_generated_smiles.pkl"
 
 # Compute the portion of generated molecules not present in the training molecules
 def compute_novelty(generated_smiles_set, train_smiles_set):
