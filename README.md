@@ -1,5 +1,7 @@
 # Molecular Graph Generation
 
+![illustration](https://github.com/abdouskamel/Molecular-Graph-Generation/blob/main/training_data_illustration.png?raw=true)
+
 This project consists in using graph neural networks to produce generative models that generate realistic molecules with interesting properties. To this end, we rely on ZINC-250k, a publicly available dataset containing molecules. We train GNN models on ZINC-250k to extract latent representations for molecules, and use these latent representations to optimize properties of interest in the generated molecules.
 
 ## Requirements
